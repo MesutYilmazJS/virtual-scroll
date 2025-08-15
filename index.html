@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Virtual Scroll</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <script type="text/javascript" src="index.js"></script>
+  </head>
+  <style>
+    #container {
+      width: 300px;
+      height: 500px;
+      overflow-y: auto;
+      position: relative;
+    }
+    .item {
+      position: absolute;
+      width: 100%;
+      height: 50px;
+      margin: 5px 0;
+      background: #f0f0f0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #spacer {
+      height: 6000px; /* Toplam veri uzunluğu (100 * 60) */
+    }
+  </style>
+  <body class="bg-gray-100 h-screen flex items-start p-4 gap-4">
+    <!-- Sol Kısım: Form -->
+    <div class="bg-white shadow p-4 rounded w-64 space-y-3">
+        <i>Grid & Liste Scroll</i>
+      <h1 class="text-2xl font-bold mb-4">Virtual Scroll </h1>
+        <div>
+          <label class="block text-sm font-medium">Item Width (px)</label>
+          <input
+            type="number"
+            id="itemWidth"
+            value="300"
+            class="border rounded w-full p-2"
+            required
+          />
+        </div>
+        <div>
+          <label class="block text-sm font-medium">Item Height (px)</label>
+          <input
+            type="number"
+            id="itemHeight"
+            value="300"
+            class="border rounded w-full p-2"
+            required
+          />
+        </div>
+        <div>
+          <label class="block text-sm font-medium">Columns</label>
+          <input
+            type="number"
+            id="columns"
+            maxlength="15"
+            value="3"
+            class="border rounded w-full p-2"
+            required
+          />
+        </div>
+        <div>
+          <label class="block text-sm font-medium">Total Items</label>
+          <input
+            type="number"
+            id="totalItems"
+            value="100"
+            class="border rounded w-full p-2"
+            required
+          />
+        </div>
+        <button id="submit_btn"
+          type="submit"
+          class="bg-blue-500 text-white px-4 py-2 rounded w-full"
+        >
+          Scroll olustur
+    </button>
+    <div id="visible_div"></div>
+    <div id="visible_col"></div>
+    <div id="page_number"></div>
+    <div id="info"></div>
+    </div>
+
+    <!-- Sağ Kısım: Scroll Container -->
+    <div id="container" class="">
+      <div id="spacer"></div>
+    </div>
+
+    <script>
+      const spacer = document.getElementById("spacer");
+      const container = document.getElementById("container");
+
+      document.querySelectorAll('#submit_btn')[0].addEventListener("click", (e) => {
+        e.preventDefault();
+        const itemWidth = parseInt(document.getElementById("itemWidth").value);
+        const itemHeight = parseInt(document.getElementById("itemHeight").value);
+        const columns = parseInt(document.getElementById("columns").value);
+        const totalItems = parseInt(document.getElementById("totalItems").value);
+        const totalRows = Math.ceil(totalItems / columns);
+        container.style.width = itemWidth * columns + "px";
+        spacer.style.height = totalRows * (itemHeight + 10) + "px";
+        window.grid = new VirtualGrid({
+          containerId: "container",
+          containerWidth: itemHeight * columns + 10,
+          containerHeight: 750,
+          itemWidth: itemWidth,
+          itemHeight: itemHeight,
+          columns: columns,
+          totalItems:totalItems,
+          gap: 10,
+        });
+        document.querySelectorAll('#submit_btn')[0].textContent = 'Yeni Olustur';
+
+      });
+    </script>
+  </body>
+</html>
