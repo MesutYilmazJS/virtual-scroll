@@ -9,9 +9,12 @@ class VirtualGrid {
         this.columns = options.columns;
         this.gap = options.gap || 20;
 
-        this.totalItems = options.totalItems;
-        this.cache = {};
+        // Backend integration state
+        this.apiUrl = options.apiUrl;
+        this.data = [];
         this.fetching = false;
+        this.hasMore = true;
+        this.nextCursor = null;
 
         this.container = document.getElementById(this.containerId);
         this.spacer = this.container.querySelector("#spacer");
@@ -22,8 +25,6 @@ class VirtualGrid {
         if (this.container._scrollHandler) {
             this.container.removeEventListener("scroll", this.container._scrollHandler);
         }
-        
-        this.init();
         
         // Handle window resize dynamically to maintain container constraints
         window.addEventListener('resize', this.debounce(() => {
@@ -54,46 +55,121 @@ class VirtualGrid {
         this.visibleRows = Math.ceil(this.containerHeight / (this.itemHeight + this.gap)) + 1;
         this.visibleCount = this.visibleRows * this.columns;
 
-        // Calculate total spacer height to stretch the scrollbar correctly
-        const totalRows = Math.ceil(this.totalItems / this.columns);
-        this.spacer.style.height = `${Math.max(0, totalRows * (this.itemHeight + this.gap))}px`;
+        // Calculate total spacer height dynamically based on loaded data
+        // We add an extra empty space row at the bottom to allow scrolling further and triggering data load
+        const loadedRows = Math.ceil(this.data.length / this.columns);
+        let visualRows = loadedRows;
+        
+        if (this.hasMore) {
+            visualRows += 2; // Extra scrollable area buffering to trigger threshold easily
+        }
+
+        this.spacer.style.height = `${Math.max(0, visualRows * (this.itemHeight + this.gap))}px`;
 
         // Center the grid inside the container horizontally if enough space, else stick to left
         const totalRowWidth = this.columns * this.itemWidth + (this.columns - 1) * this.gap;
         this.offsetX = Math.max(24, (this.containerWidth - totalRowWidth) / 2);
     }
 
-    init() {
+    async init() {
+        await this.fetchData();
         this.recalculateLayout();
         this.renderItems();
         
-        // Attach scroll listener safely
+        // Attach scroll listener safely using infinite scroll bounds
         this.container._scrollHandler = () => this.onScroll();
         this.container.addEventListener("scroll", this.container._scrollHandler);
     }
 
-    async ensureData(start, count) {
-        this.missingIndexes = [];
-        for (let i = start; i < start + count && i < this.totalItems; i++) {
-            if (!this.cache[i]) {
-                this.missingIndexes.push(i);
-            }
+    async fetchData() {
+        if (this.fetching || !this.hasMore) return;
+        
+        this.fetching = true;
+        const statusEl = document.getElementById('api_status');
+        const indicator = document.getElementById('status_indicator');
+        
+        if (statusEl) {
+            statusEl.textContent = 'Veri çekiliyor...';
+            statusEl.className = 'status-loading';
         }
 
-        // Only fetch missing items efficiently instead of recreating massive arrays
-        if (this.missingIndexes.length > 0) {
-            // Simulated fetch/data preparation
-            for (let i = 0; i < this.missingIndexes.length; i++) {
-                const index = this.missingIndexes[i];
-                this.cache[index] = `Sanal Blok #${index + 1}`;
+        // --- GITHUB PAGES LIVE DEMO MOCK FALLBACK ---
+        // If the user hasn't provided a real hosted backend yet, simulate the Postgres Cursor pagination.
+        if (this.apiUrl.includes('localhost') && window.location.hostname.includes('github.io') || this.apiUrl === 'mock') {
+            await new Promise(resolve => setTimeout(resolve, 350)); // Network latency simulation
+            
+            const limit = 60;
+            let startId = this.nextCursor ? parseInt(this.nextCursor) : 100000;
+            let mockData = [];
+            
+            for (let i = 0; i < limit && startId > 0; i++) {
+                mockData.push({
+                    id: startId,
+                    title: `Sanal Blok #${startId}`,
+                    description: 'Otomatik Üretilmiş Veri (GitHub Pages Mock API)',
+                });
+                startId--;
             }
+
+            this.data = this.data.concat(mockData);
+            this.nextCursor = startId > 0 ? startId : null;
+            if (!this.nextCursor || mockData.length === 0) this.hasMore = false;
+            
+            if (statusEl) {
+                statusEl.textContent = 'Örnek Veri Yüklendi (Mock API)';
+                statusEl.className = '';
+                if(indicator) indicator.textContent = 'Bağlı (Mock API)';
+            }
+            this.fetching = false;
+            this.recalculateLayout();
+            return;
+        }
+        // ---------------------------------------------
+        
+        try {
+            // Fetch significantly larger chunks (60 items) for standard scroll UX
+            let url = `${this.apiUrl}?limit=60`;
+            if (this.nextCursor) {
+                url += `&cursor=${this.nextCursor}`;
+            }
+
+            const response = await fetch(url);
+            if (!response.ok) throw new Error("Ağ hatası");
+
+            const json = await response.json();
+            
+            // Deduplicate guard checking: prevent append copies
+            const currentLastId = this.data.length > 0 ? this.data[this.data.length - 1].id : null;
+            if (json.data.length > 0 && json.data[0].id === currentLastId) {
+                 json.data.shift(); // remove overlapping id to keep unique
+            }
+
+            this.data = this.data.concat(json.data);
+            this.nextCursor = json.nextCursor;
+
+            if (!this.nextCursor || json.data.length === 0) {
+                this.hasMore = false;
+            }
+
+            if (statusEl) {
+                statusEl.textContent = ``;
+                statusEl.className = '';
+                if(indicator) indicator.textContent = 'Bağlı';
+            }
+        } catch (error) {
+            console.error("Fetch Data Error:", error);
+            if (statusEl) {
+                statusEl.textContent = 'Sunucuya bağlanılamadı. API açık mı?';
+                statusEl.className = 'status-error';
+                if(indicator) indicator.textContent = 'API Hatası';
+            }
+        } finally {
+            this.fetching = false;
+            this.recalculateLayout();
         }
     }
 
     async renderItems() {
-        this.fetching = true;
-        await this.ensureData(this.startIndex, this.visibleCount);
-        
         // Rapidly remove currently visible node DOM items
         this.container.querySelectorAll(".item").forEach((el) => el.remove());
 
@@ -111,14 +187,21 @@ class VirtualGrid {
             { start: "#2193b0", end: "#6dd5ed" }
         ];
 
-        const endIndex = Math.min(this.startIndex + this.visibleCount, this.totalItems);
+        // Ensure we don't index beyond data we have loaded
+        const endIndex = Math.min(this.startIndex + this.visibleCount, this.data.length);
+        
         for (let i = this.startIndex; i < endIndex; i++) {
-            const data = this.cache[i];
+            const itemObj = this.data[i];
+            // Format ID or fallback to standard index
+            const displayId = itemObj.id || ((i % 100) + 1);
+            const title = itemObj.title || `Sanal Blok #${i+1}`;
+            const desc = itemObj.description || 'DOM ağacı kararlılığını koruyan sanal bileşen aktarımı.';
+
             const div = document.createElement("div");
             div.className = "item";
             div.style.width = `${this.itemWidth}px`;
             div.style.height = `${this.itemHeight}px`;
-            // Calculate absolute position based on exact grid logic
+            // Calculate absolute position
             div.style.top = `${Math.floor(i / this.columns) * (this.itemHeight + this.gap)}px`;
             div.style.left = `${this.offsetX + (i % this.columns) * (this.itemWidth + this.gap)}px`;
             
@@ -128,10 +211,10 @@ class VirtualGrid {
                 <div class="item-inner">
                     <div class="item-decor" style="background: linear-gradient(90deg, ${palette.start}, ${palette.end})"></div>
                     <div class="item-icon" style="background: linear-gradient(135deg, ${palette.start}, ${palette.end})">
-                      ${(i % 100) + 1}
+                      #${displayId}
                     </div>
-                    <div class="item-title">${data}</div>
-                    <div class="item-desc">DOM ağacı kararlılığını kusursuz şekilde koruyan optimize edilmiş sanal bileşen aktarımı.</div>
+                    <div class="item-title">${title}</div>
+                    <div class="item-desc">${desc}</div>
                 </div>
             `;
             fragment.appendChild(div);
@@ -139,29 +222,36 @@ class VirtualGrid {
 
         this.container.appendChild(fragment);
         
-        // Update Interactive View Statistics efficiently
-        const elVisibleCol = document.getElementById('visible_col');
+        // Update Interactive View Statistics
         const elVisibleDiv = document.getElementById('visible_div');
-        const elPageNumber = document.getElementById('page_number');
+        const elDataCount = document.getElementById('data_count');
         
-        if (elVisibleCol) elVisibleCol.innerText = this.visibleRows;
         if (elVisibleDiv) elVisibleDiv.innerText = endIndex - this.startIndex;
-        if (elPageNumber) elPageNumber.innerText = Math.floor(this.startIndex / this.columns) + 1;
-        
-        this.fetching = false;
+        if (elDataCount) elDataCount.innerText = this.data.length;
     }
 
     async onScroll() {
-        if (this.fetching) return;
         const scrollTop = this.container.scrollTop;
         
         // Quantize start index to row block size
         const newStartIndex = Math.floor(scrollTop / (this.itemHeight + this.gap)) * this.columns;
         
-        // Only trigger redraw if we have scrolled enough to warrant a new row appearing
-        if (newStartIndex !== this.startIndex && newStartIndex <= this.totalItems) {
-            this.startIndex = newStartIndex;
-            await this.renderItems();
+        // Check if we approach the end of the loaded data 
+        // e.g. within 2 complete rows from the bottom of our currently fetched array
+        const threshold = this.data.length - (this.visibleCount + (this.columns * 2));
+        
+        if (this.hasMore && newStartIndex >= threshold) {
+            // Background fetch more data while scrolling
+            await this.fetchData();
+        }
+
+        // Only explicitly redraw DOM elements if we switched complete row bounds
+        if (newStartIndex !== this.startIndex) {
+            // Guard prevent overshooting bounds entirely
+            this.startIndex = Math.min(newStartIndex, Math.max(0, this.data.length - this.visibleCount));
+            if(this.startIndex < 0) this.startIndex = 0;
+
+            this.renderItems();
         }
     }
 }
