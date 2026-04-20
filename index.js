@@ -1,12 +1,13 @@
 class VirtualGrid {
     constructor(options) {
         this.containerId = options.containerId;
+        // Container dimensions
         this.containerWidth = options.containerWidth;
         this.containerHeight = options.containerHeight;
         this.itemWidth = options.itemWidth;
         this.itemHeight = options.itemHeight;
         this.columns = options.columns;
-        this.gap = options.gap;
+        this.gap = options.gap || 20;
 
         this.totalItems = options.totalItems;
         this.cache = {};
@@ -16,35 +17,59 @@ class VirtualGrid {
         this.spacer = this.container.querySelector("#spacer");
 
         this.startIndex = 0;
-        document
-            .querySelectorAll("#submit_btn")[0]
-            .addEventListener("click", (e) => {
-                location.reload();
-            });
-        document.querySelectorAll("#itemWidth")[0].disabled = true;
-        document.querySelectorAll("#itemHeight")[0].disabled = true;
-        document.querySelectorAll("#columns")[0].disabled = true;
-        document.querySelectorAll("#totalItems")[0].disabled = true;
+        
+        // Remove old scroll listeners to prevent duplicate event loops upon reset
+        if (this.container._scrollHandler) {
+            this.container.removeEventListener("scroll", this.container._scrollHandler);
+        }
+        
         this.init();
+        
+        // Handle window resize dynamically to maintain container constraints
+        window.addEventListener('resize', this.debounce(() => {
+            if (this.container.clientWidth !== this.containerWidth || 
+                this.container.clientHeight !== this.containerHeight) {
+                this.containerWidth = this.container.clientWidth;
+                this.containerHeight = this.container.clientHeight;
+                this.recalculateLayout();
+                this.renderItems();
+            }
+        }, 150));
+    }
+
+    debounce(func, wait) {
+        let timeout;
+        return function executedFunction(...args) {
+            const later = () => {
+                clearTimeout(timeout);
+                func(...args);
+            };
+            clearTimeout(timeout);
+            timeout = setTimeout(later, wait);
+        };
+    }
+
+    recalculateLayout() {
+        // Calculate visible items dynamically based on exact viewport size
+        this.visibleRows = Math.ceil(this.containerHeight / (this.itemHeight + this.gap)) + 1;
+        this.visibleCount = this.visibleRows * this.columns;
+
+        // Calculate total spacer height to stretch the scrollbar correctly
+        const totalRows = Math.ceil(this.totalItems / this.columns);
+        this.spacer.style.height = `${Math.max(0, totalRows * (this.itemHeight + this.gap))}px`;
+
+        // Center the grid inside the container horizontally if enough space, else stick to left
+        const totalRowWidth = this.columns * this.itemWidth + (this.columns - 1) * this.gap;
+        this.offsetX = Math.max(24, (this.containerWidth - totalRowWidth) / 2);
     }
 
     init() {
-        this.container.style.width = `${this.containerWidth}px`;
-        this.container.style.height = `${this.containerHeight}px`;
-
-        this.visibleRows =
-            Math.ceil(this.containerHeight / (this.itemHeight + this.gap)) + 1;
-        this.visibleCount = this.visibleRows * this.columns;
-
-        const totalRows = Math.ceil(this.totalItems / this.columns);
-        this.spacer.style.height = `${totalRows * (this.itemHeight + this.gap)}px`;
-
-        const totalRowWidth =
-            this.columns * this.itemWidth + (this.columns - 1) * this.gap;
-        this.offsetX = Math.max(0, (this.containerWidth - totalRowWidth) / 2);
-
+        this.recalculateLayout();
         this.renderItems();
-        this.container.addEventListener("scroll", () => this.onScroll());
+        
+        // Attach scroll listener safely
+        this.container._scrollHandler = () => this.onScroll();
+        this.container.addEventListener("scroll", this.container._scrollHandler);
     }
 
     async ensureData(start, count) {
@@ -55,58 +80,73 @@ class VirtualGrid {
             }
         }
 
+        // Only fetch missing items efficiently instead of recreating massive arrays
         if (this.missingIndexes.length > 0) {
-            const blockStart = this.missingIndexes[0];
-            const result = Array.from(
-                { length: this.totalItems },
-                (_, i) => `Item ${i + 1}`
-            );
-
-            result.forEach((item, idx) => {
-                this.cache[blockStart + idx] = item;
-            });
+            // Simulated fetch/data preparation
+            for (let i = 0; i < this.missingIndexes.length; i++) {
+                const index = this.missingIndexes[i];
+                this.cache[index] = `Sanal Blok #${index + 1}`;
+            }
         }
     }
 
     async renderItems() {
         this.fetching = true;
         await this.ensureData(this.startIndex, this.visibleCount);
+        
+        // Rapidly remove currently visible node DOM items
         this.container.querySelectorAll(".item").forEach((el) => el.remove());
 
         const fragment = document.createDocumentFragment();
-        const colors = [
-            "#e74c3c",
-            "#3498db",
-            "#2ecc71",
-            "#f1c40f",
-            "#9b59b6",
-            "#e67e22",
+        
+        // Premium color palettes for the generic cards
+        const palettes = [
+            { start: "#ff416c", end: "#ff4b2b" },
+            { start: "#36D1DC", end: "#5B86E5" },
+            { start: "#8E2DE2", end: "#4A00E0" },
+            { start: "#f12711", end: "#f5af19" },
+            { start: "#00b09b", end: "#96c93d" },
+            { start: "#11998e", end: "#38ef7d" },
+            { start: "#FF5F6D", end: "#FFC371" },
+            { start: "#2193b0", end: "#6dd5ed" }
         ];
 
-        for (
-            let i = this.startIndex;
-            i < Math.min(this.startIndex + this.visibleCount, this.totalItems);
-            i++
-        ) {
+        const endIndex = Math.min(this.startIndex + this.visibleCount, this.totalItems);
+        for (let i = this.startIndex; i < endIndex; i++) {
             const data = this.cache[i];
             const div = document.createElement("div");
             div.className = "item";
             div.style.width = `${this.itemWidth}px`;
             div.style.height = `${this.itemHeight}px`;
-            div.style.top = `${Math.floor(i / this.columns) * (this.itemHeight + this.gap)
-                }px`;
-            div.style.left = `${this.offsetX + (i % this.columns) * (this.itemWidth + this.gap)
-                }px`;
-            div.style.backgroundColor = colors[(this.startIndex + i) % colors.length];
-            div.innerHTML = `<h3>${data}</h3>`;
+            // Calculate absolute position based on exact grid logic
+            div.style.top = `${Math.floor(i / this.columns) * (this.itemHeight + this.gap)}px`;
+            div.style.left = `${this.offsetX + (i % this.columns) * (this.itemWidth + this.gap)}px`;
+            
+            const palette = palettes[i % palettes.length];
+
+            div.innerHTML = `
+                <div class="item-inner">
+                    <div class="item-decor" style="background: linear-gradient(90deg, ${palette.start}, ${palette.end})"></div>
+                    <div class="item-icon" style="background: linear-gradient(135deg, ${palette.start}, ${palette.end})">
+                      ${(i % 100) + 1}
+                    </div>
+                    <div class="item-title">${data}</div>
+                    <div class="item-desc">DOM ağacı kararlılığını kusursuz şekilde koruyan optimize edilmiş sanal bileşen aktarımı.</div>
+                </div>
+            `;
             fragment.appendChild(div);
         }
 
         this.container.appendChild(fragment);
-        document.querySelectorAll('#visible_col')[0].innerHTML= `<i>Görülen Sütün : ${this.visibleRows} <i>`
-        document.querySelectorAll('#visible_div')[0].innerHTML= `<i>Görülen div sayısı : ${this.visibleCount} <i>`
-        document.querySelectorAll('#page_number')[0].innerHTML= `<i>Sayfa sayısı : ${this.startIndex+1}<i>`
-        document.querySelectorAll('#info')[0].innerHTML= `<h7>Detaylı bilgi : F12 -> grid </h7>`
+        
+        // Update Interactive View Statistics efficiently
+        const elVisibleCol = document.getElementById('visible_col');
+        const elVisibleDiv = document.getElementById('visible_div');
+        const elPageNumber = document.getElementById('page_number');
+        
+        if (elVisibleCol) elVisibleCol.innerText = this.visibleRows;
+        if (elVisibleDiv) elVisibleDiv.innerText = endIndex - this.startIndex;
+        if (elPageNumber) elPageNumber.innerText = Math.floor(this.startIndex / this.columns) + 1;
         
         this.fetching = false;
     }
@@ -114,9 +154,12 @@ class VirtualGrid {
     async onScroll() {
         if (this.fetching) return;
         const scrollTop = this.container.scrollTop;
-        const newStartIndex =
-            Math.floor(scrollTop / (this.itemHeight + this.gap)) * this.columns;
-        if (newStartIndex !== this.startIndex) {
+        
+        // Quantize start index to row block size
+        const newStartIndex = Math.floor(scrollTop / (this.itemHeight + this.gap)) * this.columns;
+        
+        // Only trigger redraw if we have scrolled enough to warrant a new row appearing
+        if (newStartIndex !== this.startIndex && newStartIndex <= this.totalItems) {
             this.startIndex = newStartIndex;
             await this.renderItems();
         }
